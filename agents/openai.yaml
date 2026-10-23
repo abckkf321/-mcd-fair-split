@@ -1,0 +1,13 @@
+interface:
+  display_name: 麦麦公平账 · McFairSplit
+  short_description: 按餐品归属分摊优惠和费用，比较规则并导出能逐项核对的拼餐账单
+  default_prompt: 使用 $mcd-fair-split 帮我们分这笔麦当劳订单，先认领餐品，再比较优惠分摊规则。
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

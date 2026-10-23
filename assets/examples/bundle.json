@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"bill_id":"shared-bundle","version":1,"currency":"CNY",
+  "data_mode":"synthetic_demo","payment_status":"paid","paid_total_minor":3000,"payer_id":"A","payer_paid_minor":3000,
+  "participants":[{"id":"A","name":"小王"},{"id":"B","name":"小李"}],
+  "items":[{"id":"bundle-1","name":"跨人套餐：按约定2比1拆分","amount_minor":3000,"source":"synthetic_demo","claims":[{"participant_id":"A","weight":2},{"participant_id":"B","weight":1}]}],
+  "discounts":[],"fees":[],"rules_confirmed":true,"organizer_confirmed":false,"unresolved":[]
+}

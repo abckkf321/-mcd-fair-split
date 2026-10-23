@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "bill_id": "office-lunch",
+  "version": 1,
+  "currency": "CNY",
+  "data_mode": "synthetic_demo",
+  "payment_status": "paid",
+  "paid_total_minor": 8800,
+  "payer_id": "A",
+  "payer_paid_minor": 8800,
+  "participants": [{"id":"A","name":"小王"},{"id":"B","name":"小李"},{"id":"C","name":"阿青"},{"id":"D","name":"小陈"}],
+  "items": [
+    {"id":"meal-A","name":"小王的主食","amount_minor":3200,"source":"synthetic_demo","claims":[{"participant_id":"A","weight":1}]},
+    {"id":"meal-B","name":"小李的主食","amount_minor":2200,"source":"synthetic_demo","claims":[{"participant_id":"B","weight":1}]},
+    {"id":"drink-C","name":"阿青的饮料","amount_minor":800,"source":"synthetic_demo","claims":[{"participant_id":"C","weight":1}]},
+    {"id":"meal-D","name":"小陈的餐品","amount_minor":2000,"source":"synthetic_demo","claims":[{"participant_id":"D","weight":1}]},
+    {"id":"shared","name":"三人共享小食","amount_minor":1800,"source":"synthetic_demo","portions":3,"claims":[{"participant_id":"A","weight":1},{"participant_id":"B","weight":1},{"participant_id":"D","weight":1}]}
+  ],
+  "discounts":[{"id":"discount-1","name":"共享优惠（示例范围）","amount_minor":2000,"source":"synthetic_demo","eligible":["A","B","D"],"eligible_items":["meal-A","meal-B","meal-D","shared"],"policy":"proportional"}],
+  "fees":[
+    {"id":"delivery","name":"实际配送费","amount_minor":600,"source":"synthetic_demo","eligible":["A","B","C","D"],"policy":"equal"},
+    {"id":"packing","name":"实际打包费","amount_minor":200,"source":"synthetic_demo","eligible":["A","B","C","D"],"policy":"equal"}
+  ],
+  "rules_confirmed":true,
+  "organizer_confirmed":false,
+  "unresolved":[]
+}

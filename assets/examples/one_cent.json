@@ -1,0 +1,7 @@
+{
+  "schema_version":1,"bill_id":"one-cent","version":1,"currency":"CNY",
+  "data_mode":"synthetic_demo","payment_status":"paid","paid_total_minor":1,"payer_id":"A","payer_paid_minor":1,
+  "participants":[{"id":"A","name":"甲"},{"id":"B","name":"乙"},{"id":"C","name":"丙"}],
+  "items":[{"id":"tiny","name":"一分钱尾分演示","amount_minor":1,"source":"synthetic_demo","claims":[{"participant_id":"A","weight":1},{"participant_id":"B","weight":1},{"participant_id":"C","weight":1}]}],
+  "discounts":[],"fees":[],"rules_confirmed":true,"organizer_confirmed":false,"unresolved":[]
+}

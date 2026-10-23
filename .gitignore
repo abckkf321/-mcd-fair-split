@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+*.db
+*.db-*
+.env
+private/
+exports/
