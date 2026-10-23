@@ -1,17 +1,19 @@
-"""Financial invariants, realistic scope failures, privacy, persistence and transport."""
+"""分账规则、文件保存和MCP响应处理的回归测试。"""
 import contextlib
 import copy
 import io
 import json
 from pathlib import Path
 import random
+import os
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from fairsplit import BillError, allocate, compare, history, money, save_version, solve, yuan
-from cli import main, draft, ROOT
-from mcp_readonly import Client, MCPError, safe_order
+from cli import main, draft, write, ROOT
+from mcp_readonly import Client, MCPError, read_result, safe_order, safe_orders
 import render
 
 
@@ -87,6 +89,12 @@ class BillTests(unittest.TestCase):
         self.assertEqual([p["discount_minor"] for p in r["people"]], [0, 2000, 0, 0])
         b["discounts"][0]["eligible_items"] = ["drink-C"]
         with self.assertRaises(BillError):
+            solve(b)
+
+    def test_fee_cannot_silently_ignore_product_scope(self):
+        b = example()
+        b["fees"][0]["eligible_items"] = ["drink-C"]
+        with self.assertRaisesRegex(BillError, "eligible_items"):
             solve(b)
 
     def test_overlapping_discount_caps(self):
@@ -167,8 +175,82 @@ class BillTests(unittest.TestCase):
         self.assertIn("&lt;script&gt;", html)
         self.assertIn("default-src 'none'", html)
 
+    def test_zero_discount_and_literal_names(self):
+        b = example("bundle")
+        b["participants"][0]["name"] = "小周|[付款](https://example.invalid) $style"
+        b["items"][0]["name"] = "**套餐** <script>"
+        result = solve(b)
+        html = render.html(result)
+        md = render.markdown(result)
+        self.assertNotIn("−0.00", html)
+        self.assertNotIn("−0.00", md)
+        self.assertIn("$style", html)
+        self.assertIn("&lt;script&gt;", html)
+        self.assertIn(r"小周\|\[付款\]\(https://example\.invalid\)", md)
+        self.assertIn(r"\*\*套餐\*\*", md)
+
 
 class StorageTests(unittest.TestCase):
+    def test_saved_bill_excludes_unused_private_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp)/"ledger.db"
+            b = example()
+            b["token"] = "DO_NOT_STORE"
+            b["snapshot_digest"] = {"token":"DO_NOT_STORE"}
+            b["participants"][0]["mobilePhone"] = "DO_NOT_STORE"
+            b["items"][0]["original_response"] = {"secret":"DO_NOT_STORE"}
+            b["fees"][0]["deliveryInfo"] = {"secret":"DO_NOT_STORE"}
+            b["fees"][0]["allocations"] = {"secret":"DO_NOT_STORE"}
+            save_version(db, b, 0)
+            with sqlite3.connect(db) as con:
+                raw = con.execute("SELECT bill_json FROM versions").fetchone()[0]
+            self.assertNotIn("DO_NOT_STORE", raw)
+            self.assertEqual(solve(json.loads(raw)), solve(b))
+
+    def test_failed_export_keeps_previous_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)/"bill.html"
+            out.write_text("previous bill")
+            with patch("cli.os.replace", side_effect=OSError("fixture failure")):
+                with self.assertRaises(OSError):
+                    write(out, "new bill")
+            self.assertEqual(out.read_text(), "previous bill")
+            self.assertEqual(list(Path(tmp).iterdir()), [out])
+
+    def test_export_replaces_existing_public_file_with_private_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)/"bill.md"
+            out.write_text("old")
+            out.chmod(0o644)
+            write(out, "new")
+            self.assertEqual(out.read_text(), "new")
+            self.assertEqual(out.stat().st_mode & 0o777, 0o600)
+
+    def test_export_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original = Path(tmp)/"source"
+            original.write_text("keep")
+            link = Path(tmp)/"link"
+            link.symlink_to(original)
+            with self.assertRaises(BillError):
+                write(link, "replace")
+            self.assertEqual(original.read_text(), "keep")
+
+    def test_cli_rejects_hardlink_to_input(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            src, out = Path(tmp)/"bill.json", Path(tmp)/"other-name.json"
+            src.write_text(json.dumps(example()))
+            os.link(src, out)
+            self.assertEqual(main(["solve",str(src),"--json",str(out)]), 2)
+            self.assertEqual(json.loads(src.read_text())["paid_total_minor"], 8800)
+
+    def test_draft_cannot_overwrite_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            src = Path(tmp)/"snapshot.json"
+            src.write_text(json.dumps(AdapterTests().snapshot()))
+            self.assertEqual(main(["draft",str(src),"--total-unit","yuan","--bill-id","bill","--out",str(src)]), 2)
+            self.assertEqual(json.loads(src.read_text())["source"], "official_order_snapshot")
+
     def test_cas_and_immutable_versions(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp)/"ledger.db"
@@ -210,7 +292,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(s["unit_status"], "requires_confirmation")
 
     def test_draft_cannot_silently_settle(self):
-        b = draft(self.snapshot(), "yuan", "private-lunch")
+        b = draft(self.snapshot(), "yuan", "private-lunch", delivery_unit="yuan")
         self.assertEqual(b["paid_total_minor"], 3000)
         self.assertIsNone(b["items"][0]["amount_minor"])
         with self.assertRaises(BillError):
@@ -224,9 +306,36 @@ class AdapterTests(unittest.TestCase):
     def test_missing_fee_is_unknown(self):
         s = self.snapshot()
         del s["order"]["tablewarePrice"]
-        b = draft(s, "yuan", "private-lunch")
+        b = draft(s, "yuan", "private-lunch", delivery_unit="yuan")
         self.assertIsNone(b["fees"][-1]["amount_minor"])
         self.assertTrue(any("餐具费" in s for s in b["unresolved"]))
+
+    def test_delivery_unit_is_not_inferred_from_total(self):
+        s = self.snapshot()
+        s["order"]["realDeliveryPrice"] = "500"
+        unresolved = draft(s, "yuan", "bill")
+        self.assertIsNone(unresolved["fees"][0]["amount_minor"])
+        explicit = draft(s, "yuan", "bill", delivery_unit="fen")
+        self.assertEqual(explicit["paid_total_minor"], 3000)
+        self.assertEqual(explicit["fees"][0]["amount_minor"], 500)
+
+    def test_invalid_fen_is_reported_as_bill_error(self):
+        s = self.snapshot()
+        s["order"]["realTotalAmount"] = "²"
+        with self.assertRaises(BillError):
+            draft(s, "fen", "bill")
+
+    def test_snapshot_rejects_nested_data_in_scalar_fields(self):
+        for field in ("realTotalAmount", "storeName"):
+            with self.assertRaises(MCPError):
+                safe_order({field:{"secret":"PRIVATE"},"orderProductList":[]})
+        with self.assertRaises(MCPError):
+            safe_orders({"list":[{"orderId":{"token":"PRIVATE"}}]})
+
+    def test_malformed_lists_do_not_become_empty_orders(self):
+        for bad in ({}, {"list":None}, {"list":"not a list"}, {"list":["not an order"]}):
+            with self.assertRaises(MCPError):
+                safe_orders(bad)
 
     def test_cancelled_not_paid(self):
         s = self.snapshot()
@@ -248,10 +357,11 @@ class AdapterTests(unittest.TestCase):
     def test_mcp_json_and_sse(self):
         class Response:
             headers = {}
-            def __init__(self, raw): self.raw = raw
+            def __init__(self, raw): self.raw = io.BytesIO(raw)
             def __enter__(self): return self
             def __exit__(self,*args): return False
-            def read(self,*args): return self.raw
+            def read(self,*args): return self.raw.read(*args)
+            def readline(self,*args): return self.raw.readline(*args)
         class Opener:
             def __init__(self, raw): self.raw = raw
             def open(self,*args,**kwargs): return Response(self.raw)
@@ -261,6 +371,23 @@ class AdapterTests(unittest.TestCase):
                 client = Client()
                 client.opener = Opener(raw)
                 self.assertEqual(client.rpc("initialize"), {"ok":True})
+
+    def test_sse_returns_before_server_closes_connection(self):
+        class OpenStream(io.BytesIO):
+            def read(self, *args):
+                raise AssertionError("不能等待长连接EOF")
+            def readline(self, *args):
+                line = super().readline(*args)
+                if not line:
+                    raise AssertionError("完整结果之后不能继续读")
+                return line
+        raw = b': keepalive\r\ndata: {"jsonrpc":"2.0","method":"progress"}\r\n\r\ndata: {"jsonrpc":"2.0",\r\ndata: "id":7,"result":{"ok":true}}\r\n\r\n'
+        self.assertEqual(read_result(OpenStream(raw),7), {"ok":True})
+
+    def test_invalid_rpc_results_fail_cleanly(self):
+        for raw in (b'{"id":1,"result":[]}', b'{"id":2,"result":{}}', b'data: null\n\n', b'data: {"id":1,"error":{}}\n\n'):
+            with self.assertRaises(MCPError):
+                read_result(io.BytesIO(raw),1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+  <title>麦麦公平账 · 分账明细</title>
+  <style>$style</style>
+</head>
+<body>
+<main>
+  <header class="topbar">
+    <div class="brand"><span class="logo">≋</span>麦麦公平账 <small>McFairSplit</small></div>
+    <span class="pill">$data_label</span>
+  </header>
+  $demo_notice
+  <div class="hero">
+    <div>
+      <div class="eyebrow">拼餐分账</div>
+      <h1>这顿饭，<br><em>各付多少？</em></h1>
+      <p class="muted">餐品、优惠和附加费用分开列，按大家的约定计算。</p>
+    </div>
+    <div class="receipt">
+      <div class="receipt-line"><span>本单实付</span><span>$people_count 人 · v$version</span></div>
+      <div class="grand">¥$total</div>
+      <div class="verified">商品 $basis − 优惠 $discount_total + 费用 $fee = 实付</div>
+    </div>
+  </div>
+  <div class="persons">$cards</div>
+  <div class="layout">
+    <div>
+      <section class="panel">
+        <div class="section-heading">
+          <div><span class="eyebrow">金额明细</span><h2>每个人怎么算</h2></div>
+          <span class="pill">$status</span>
+        </div>
+        <div class="table-scroll"><table>
+          <thead><tr><th>人员</th><th>餐品 ¥</th><th>优惠 ¥</th><th>费用 ¥</th><th>应承担 ¥</th></tr></thead>
+          <tbody>$table_rows</tbody>
+          <tfoot><tr><td>合计</td><td>$basis</td><td class="green">$discount</td><td>$fee</td><td>$total</td></tr></tfoot>
+        </table></div>
+        <p class="note">折扣不超过适用餐费。套餐拆分按约定比例计算，尾分已分配到个人金额。</p>
+      </section>
+      $comparison
+    </div>
+    <aside>
+      <section class="panel settlement">
+        <span class="eyebrow">垫付结算</span>
+        <h2>转账建议</h2>
+        $transfers
+        <p class="note">$payer 已垫付整单 ¥$total。以上是建议转账金额，未核验到账。</p>
+      </section>
+      <section class="panel">
+        <span class="eyebrow">分账规则</span>
+        <h2>本次约定</h2>
+        <ul class="rules">$rules</ul>
+      </section>
+    </aside>
+  </div>
+  <footer>
+    <span>McFairSplit · 非麦当劳官方产品</span>
+    <span>v$version · $data_label · $status</span>
+  </footer>
+</main>
+</body>
+</html>

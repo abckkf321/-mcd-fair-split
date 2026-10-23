@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""McFairSplit: deterministic, offline money allocation. Python 3.10+, stdlib."""
+"""按商品归属分账。金额用整数分，比例计算用Fraction。"""
 from __future__ import annotations
 
 import copy
@@ -29,7 +29,7 @@ def minor(value, label="金额"):
 
 
 def yuan(value):
-    require(isinstance(value, str) and re.fullmatch(r"\d+(?:\.\d{1,2})?", value) is not None,
+    require(isinstance(value, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]{1,2})?", value) is not None,
             "元金额必须是最多两位小数的非负十进制字符串")
     return minor(int(Decimal(value) * 100))
 
@@ -52,7 +52,7 @@ def name(value):
 
 
 def allocate(amount, weights, seed, caps=None):
-    """Capped proportional allocation, with exact largest remainders."""
+    """先处理抵扣上限，再用最大余数法分配剩下的分钱。"""
     minor(amount)
     require(isinstance(weights, dict) and bool(weights), "金额池必须有参与人")
     require(all(type(w) is int and w >= 0 for w in weights.values()), "权重必须是非负整数")
@@ -175,6 +175,8 @@ def solve(bill):
             require(all(p in people for p in eligible) and len(set(eligible)) == len(eligible), "适用人无效或重复")
             amount = minor(pool.get("amount_minor"))
             policy = pool.get("policy")
+            require(kind == "discount" or "eligible_items" not in pool,
+                    "eligible_items仅用于优惠；费用请明确适用人员或指定各人金额")
             eligible_items = pool.get("eligible_items", list(item_remaining))
             require(isinstance(eligible_items, list) and bool(eligible_items)
                     and all(i in item_remaining for i in eligible_items)
@@ -237,6 +239,36 @@ def compare(bill, policy="equal", pool_id=None):
     return {"base": original, "alternate": alternate, "alternate_policy": policy, "delta_minor": delta}
 
 
+def storage_bill(bill):
+    """只保存计算所需字段，不把附带的原始订单或凭证写入账本。"""
+    fields = ("schema_version", "bill_id", "version", "currency", "data_mode", "payment_status",
+              "paid_total_minor", "payer_id", "payer_paid_minor", "rules_confirmed",
+              "organizer_confirmed", "unresolved")
+    pick = lambda value, keys: {k: copy.deepcopy(value[k]) for k in keys if k in value}
+    saved = pick(bill, fields)
+    digest = bill.get("snapshot_digest")
+    if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest):
+        saved["snapshot_digest"] = digest
+    for key in ("total_unit_confirmed_by_operator", "delivery_unit_confirmed_by_operator"):
+        if isinstance(bill.get(key), str) and bill[key] in {"yuan", "fen"}:
+            saved[key] = bill[key]
+    saved["participants"] = [pick(p, ("id", "name")) for p in bill["participants"]]
+    saved["items"] = []
+    for item in bill["items"]:
+        row = pick(item, ("id", "name", "amount_minor", "source", "portions"))
+        row["claims"] = [pick(c, ("participant_id", "weight")) for c in item["claims"]]
+        saved["items"].append(row)
+    pool_fields = ("id", "name", "amount_minor", "source", "eligible", "policy", "eligible_items")
+    for kind in ("discounts", "fees"):
+        saved[kind] = []
+        for pool in bill[kind]:
+            row = pick(pool, pool_fields)
+            if pool["policy"] == "specified":
+                row["allocations"] = copy.deepcopy(pool["allocations"])
+            saved[kind].append(row)
+    return saved
+
+
 def save_version(db_path, bill, expected_version):
     result = solve(bill)
     require(type(expected_version) is int and expected_version >= 0, "expected_version必须是非负整数")
@@ -251,7 +283,7 @@ def save_version(db_path, bill, expected_version):
         con.execute("BEGIN IMMEDIATE")
         current = con.execute("SELECT COALESCE(MAX(version),0) FROM versions WHERE bill_id=?", (bill["bill_id"],)).fetchone()[0]
         require(current == expected_version, "账单版本冲突，请先读取最新版本再修改")
-        con.execute("INSERT INTO versions VALUES (?,?,?,?)", (bill["bill_id"], bill["version"], json.dumps(bill, ensure_ascii=False), json.dumps(result, ensure_ascii=False)))
+        con.execute("INSERT INTO versions VALUES (?,?,?,?)", (bill["bill_id"], bill["version"], json.dumps(storage_bill(bill), ensure_ascii=False), json.dumps(result, ensure_ascii=False)))
     return result
 
 

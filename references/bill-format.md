@@ -39,7 +39,7 @@ claims 为 [{participant_id,weight}]。weight 必须是正整数；1:2就是1和
 
 ## 金额池
 
-每个池包含 id、name、amount_minor、source、eligible、policy。优惠可选 eligible_items，列出可用优惠的商品行ID；省略表示全部收费行在适用人员中的份额。eligible 为明确参与的人员ID数组，不从名称自动推断。
+每个池包含 id、name、amount_minor、source、eligible、policy。仅优惠可选 eligible_items，列出可用优惠的商品行ID；费用设置该字段会报错。省略表示全部收费行在适用人员中的份额。eligible 为明确参与的人员ID数组，不从名称自动推断。
 
 - proportional：优惠按剩余适用商品金额分；费用按参与人的优惠前餐费比例分。
 - equal：适用人员等额分；优惠仍受每人的适用商品余额上限限制，超出份额会重新分配。
@@ -65,6 +65,6 @@ compare 返回 base、alternate、delta_minor。alternate 总额不变，组织�
 
 ## 版本账本
 
-`save bill.json --db 私有目录/ledger.db --expected-version 0` 保存version=1。修改已确认数据时复制账单，version=2，再以expected-version=1保存。已有旧版绝不覆盖；并发冲突返回错误。`history bill_id --db ...` 返回私有明细，不公开运行输出。
+`save bill.json --db 私有目录/ledger.db --expected-version 0` 保存version=1。修改已确认数据时复制账单，version=2，再以expected-version=1保存。保存不会覆盖旧版本；并发冲突返回错误。账本仅保留计算字段及有效的单位确认记录、快照摘要，输入中的其他附加字段不保存。`history bill_id --db ...` 返回私有明细，不公开运行输出。
 
 首版不支持退款、多人垫付、已有组内转账和其他调整；这些非空字段会被拒绝。不要删掉这些输入后宣称账单已完整处理。

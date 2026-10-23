@@ -39,7 +39,7 @@ query-order输入orderId。其Schema声明：
 
 实际响应可缺字段、不同状态可有不同语义。order-list的状态字段不应假定与详情完全相同；不要靠列表标签推断已付再据此结算。首版draft依据详情代码决定是否需要核对。
 
-`draft snapshot.json --total-unit yuan --bill-id lunch-001 --out bill.json` 表示操作者已核实总额与配送字符串金额为元；如果已核实为分使用fen。明确元的打包/餐具字段独立转换。金额缺失继续unknown，不能置零。
+`draft snapshot.json --total-unit yuan --delivery-unit fen --bill-id lunch-001 --out bill.json` 表示总额已核实为元、配送费已核实为分。两个字段分别选择单位；省略 `--delivery-unit` 时配送费保持待确认。明确为元的打包费和餐具费独立转换。缺失金额保持未知，不默认零。
 
 draft不生成商品成交金额，保留原价和数量参考，amount_minor=null、claims=[]、规则未确认。由用户补充/认可拆分后才允许solve。只有总额可靠时可以按约定权重分净餐费，来源标agreed_weight。
 
