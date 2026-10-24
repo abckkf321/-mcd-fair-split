@@ -13,6 +13,8 @@ description: 用于麦当劳拼餐AA、餐品认领、共享小食、跨人套�
 
 读 [账单格式](references/bill-format.md) 了解输入字段；接入实际订单前读 [MCP 字段说明](references/mcp-fields.md)。
 
+输入 JSON 文件限 8MB、64 层嵌套；字段名不能重复，也不能使用 NaN 或 Infinity。读取失败时修正输入，不忽略重复金额或规则字段后继续分账。
+
 演示命令：
 
 ```bash

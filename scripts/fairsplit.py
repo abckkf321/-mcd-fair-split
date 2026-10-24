@@ -31,6 +31,7 @@ def yuan(value):
     require(isinstance(value, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]{1,2})?", value) is not None,
             "元金额必须是最多两位小数的非负十进制字符串")
     whole, _, frac = value.partition(".")
+    whole = whole.lstrip("0") or "0"
     # 手工按位换算成整数分，不经过Decimal运算，避免受全局decimal上下文精度影响。
     require(len(whole) <= 11, "元金额位数超出支持范围")
     return minor(int(whole + frac.ljust(2, "0")))
@@ -47,9 +48,10 @@ def identifier(value, label="标识"):
 
 
 def name(value):
-    require(isinstance(value, str) and 0 < len(value.strip()) <= 120,
+    require(isinstance(value, str) and 0 < len(value) <= 120 and bool(value.strip()),
             "名称必须是1—120个字符")
     require(not any(ord(c) < 32 for c in value), "名称不能包含控制字符")
+    require(not any(0xD800 <= ord(c) <= 0xDFFF for c in value), "名称包含无效的Unicode字符")
     return value
 
 
@@ -101,7 +103,7 @@ def solve(bill):
     bid = identifier(bill.get("bill_id"), "账单ID")
     require(type(bill.get("version")) is int and bill["version"] >= 1, "版本必须是正整数")
     require(bill.get("currency") == "CNY", "首版只支持人民币CNY")
-    require(bill.get("data_mode") in MODES, "必须明确数据来源模式")
+    require(isinstance(bill.get("data_mode"), str) and bill["data_mode"] in MODES, "必须明确数据来源模式")
     require(bill.get("unresolved") == [], "账单仍有待核对项；请先解决unresolved")
     require(bill.get("payment_status") == "paid", "正式分账只支持已经确认支付的订单")
     require(bill.get("rules_confirmed") is True, "请先与用户确认归属和分配规则")
@@ -115,7 +117,7 @@ def solve(bill):
         require(pid not in people, "人员ID重复")
         people[pid] = name(person.get("name"))
     paid = minor(bill.get("paid_total_minor"), "实付总额")
-    payer = bill.get("payer_id")
+    payer = identifier(bill.get("payer_id"), "垫付人员ID")
     require(payer in people, "请选择一名有效垫付者")
     require(bill.get("payer_paid_minor") == paid and type(bill.get("payer_paid_minor")) is int,
             "首版要求一名垫付者已支付整笔订单，金额须与实付相同")
@@ -133,7 +135,7 @@ def solve(bill):
         require(iid not in ids, "商品ID重复，不能重复认领同一收费实例")
         ids.add(iid)
         amount = minor(item.get("amount_minor"), f"商品{iid}金额")
-        require(item.get("source") in SOURCES, f"商品{iid}缺少已确认来源")
+        require(isinstance(item.get("source"), str) and item["source"] in SOURCES, f"商品{iid}缺少已确认来源")
         if bill["data_mode"] != "synthetic_demo":
             require(item["source"] != "synthetic_demo", "真实账单不能混入演示商品")
         claims = item.get("claims")
@@ -141,7 +143,7 @@ def solve(bill):
         weights = {}
         for claim in claims:
             require(isinstance(claim, dict), "认领必须是对象")
-            pid, weight = claim.get("participant_id"), claim.get("weight")
+            pid, weight = identifier(claim.get("participant_id"), "认领人员ID"), claim.get("weight")
             require(pid in people and pid not in weights, f"商品{iid}有无效或重复认领人")
             require(type(weight) is int and weight > 0, "认领权重必须是正整数")
             weights[pid] = weight
@@ -169,19 +171,19 @@ def solve(bill):
             poolid = identifier(pool.get("id"), "金额池ID")
             require(poolid not in seen, "同类金额池ID重复")
             seen.add(poolid)
-            require(pool.get("source") in SOURCES, f"金额池{poolid}缺少已确认来源")
+            require(isinstance(pool.get("source"), str) and pool["source"] in SOURCES, f"金额池{poolid}缺少已确认来源")
             if bill["data_mode"] != "synthetic_demo":
                 require(pool["source"] != "synthetic_demo", "真实账单不能混入演示金额池")
             eligible = pool.get("eligible")
             require(isinstance(eligible, list) and bool(eligible), f"金额池{poolid}缺少适用人")
-            require(all(p in people for p in eligible) and len(set(eligible)) == len(eligible), "适用人无效或重复")
+            require(all(isinstance(p, str) and p in people for p in eligible) and len(set(eligible)) == len(eligible), "适用人无效或重复")
             amount = minor(pool.get("amount_minor"))
             policy = pool.get("policy")
             require(kind == "discount" or "eligible_items" not in pool,
                     "eligible_items仅用于优惠；费用请明确适用人员或指定各人金额")
             eligible_items = pool.get("eligible_items", list(item_remaining))
             require(isinstance(eligible_items, list) and bool(eligible_items)
-                    and all(i in item_remaining for i in eligible_items)
+                    and all(isinstance(i, str) and i in item_remaining for i in eligible_items)
                     and len(set(eligible_items)) == len(eligible_items), "适用商品无效或重复")
             discount_basis = {p: sum(item_remaining[i].get(p, 0) for i in eligible_items) for p in eligible}
             caps = discount_basis if kind == "discount" else None
@@ -192,7 +194,7 @@ def solve(bill):
                 require(sum(shares.values()) == amount, "指定分配与金额池总额不符")
                 require(caps is None or all(shares[p] <= caps[p] for p in shares), "指定优惠超过可抵扣金额")
             else:
-                require(policy in {"proportional", "equal"}, "规则必须是proportional、equal或specified")
+                require(isinstance(policy, str) and policy in {"proportional", "equal"}, "规则必须是proportional、equal或specified")
                 weights = {p: 1 if policy == "equal" else (discount_basis[p] if kind == "discount" else basis[p]) for p in eligible}
                 shares = allocate(amount, weights, f"{bid}:{kind}:{poolid}", caps)
             for pid, value in shares.items():

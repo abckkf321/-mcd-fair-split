@@ -1,9 +1,11 @@
 """麦当劳MCP只读客户端。凭证从环境变量读取。"""
 import json
+from http.client import HTTPException
 import os
 import urllib.error
 import urllib.request
 from time import monotonic
+from json_input import parse_json
 
 ALLOWED = {"query-order", "order-list", "now-time-info", "query-meals", "query-meal-detail", "calculate-price"}
 
@@ -29,25 +31,32 @@ def rpc_result(payload, request_id):
 
 def read_result(response, request_id):
     """SSE收到本次请求的完整事件即返回，不等待服务端关闭长连接。"""
+    deadline = monotonic()+25
     first = response.readline(MAX_RESPONSE_BYTES+1)
     used = len(first)
+    while first and not first.strip(b" \t\r\n"):
+        if used > MAX_RESPONSE_BYTES:
+            raise MCPError("响应过大，请缩小查询范围")
+        if monotonic() >= deadline:
+            raise MCPError("等待MCP事件超时，请稍后重试")
+        first = response.readline(MAX_RESPONSE_BYTES-used+1)
+        used += len(first)
     if used > MAX_RESPONSE_BYTES:
         raise MCPError("响应过大，请缩小查询范围")
     if first.lstrip().startswith(b"{"):
-        raw = first + response.read(MAX_RESPONSE_BYTES-used+1)
-        if len(raw) > MAX_RESPONSE_BYTES:
+        rest = response.read(MAX_RESPONSE_BYTES-used+1)
+        if used + len(rest) > MAX_RESPONSE_BYTES:
             raise MCPError("响应过大，请缩小查询范围")
-        return rpc_result(json.loads(raw.decode("utf-8")), request_id)
+        return rpc_result(parse_json(first + rest), request_id)
 
     parts = []
     line = first
-    deadline = monotonic()+25
     while True:
         text = line.decode("utf-8").rstrip("\r\n")
         if text.startswith("data:"):
             parts.append(text[5:].lstrip(" "))
         if not text and parts:
-            payload = json.loads("\n".join(parts))
+            payload = parse_json("\n".join(parts))
             parts.clear()
             if not isinstance(payload, dict):
                 raise MCPError("SSE事件格式不正确")
@@ -91,14 +100,14 @@ class Client:
         except urllib.error.HTTPError as exc:
             messages = {401: "连接凭证无效或过期，请更新连接", 429: "服务限流，请稍后按Retry-After重试"}
             raise MCPError(messages.get(exc.code, f"官方服务HTTP {exc.code}；未自动重试")) from None
-        except (OSError, UnicodeError):
+        except (OSError, UnicodeError, HTTPException):
             raise MCPError("连接失败或超时；未自动重试，请稍后再次查询") from None
         except (ValueError, KeyError, TypeError):
             raise MCPError("无法解析MCP响应，未自动重试") from None
 
     def initialize(self):
         result = self.rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
-                         "clientInfo": {"name": "McFairSplit", "version": "0.1.1"}})
+                         "clientInfo": {"name": "McFairSplit", "version": "0.1.2"}})
         if result.get("protocolVersion") != "2025-06-18":
             raise MCPError("协议协商结果不受此客户端支持")
         self.headers["MCP-Protocol-Version"] = "2025-06-18"
@@ -129,7 +138,7 @@ class Client:
             for block in content:
                 if block.get("type") == "text":
                     try:
-                        candidate = json.loads(block["text"])
+                        candidate = parse_json(block["text"])
                         if isinstance(candidate, dict):
                             data = candidate
                             break

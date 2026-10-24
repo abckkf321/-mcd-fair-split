@@ -22,6 +22,15 @@ def discount(value):
     return ("−" if value else "") + money(value)
 
 
+def pool_scope(pool, result):
+    names = {p["id"]: p["name"] for p in result["people"]}
+    scope = "适用人员：" + "、".join(names[p] for p in pool["eligible"])
+    if pool["kind"] == "discount":
+        items = {item["id"]: item["name"] for item in result["items"]}
+        scope += "；适用商品：" + "、".join(f"{items[i]} [{i}]" for i in pool["eligible_items"])
+    return scope
+
+
 def markdown(result, comparison=None):
     names = {p["id"]: p["name"] for p in result["people"]}
     status = "组织者已确认" if result["status"] == "organizer_confirmed" else "待组织者确认"
@@ -39,7 +48,7 @@ def markdown(result, comparison=None):
     rows += ["", "## 优惠和费用", ""]
     for pool in result["pools"]:
         shares = "、".join(f"{md_text(names[p])} ¥{money(v)}" for p, v in pool["shares"].items())
-        rows.append(f"- {md_text(pool['name'])}：{POLICIES[pool['policy']]}；{shares}（{SOURCE[pool['source']]}）")
+        rows.append(f"- {md_text(pool['name'])}：{POLICIES[pool['policy']]}；{shares}（{SOURCE[pool['source']]}）；{md_text(pool_scope(pool, result))}")
     rows += ["", "## 转账建议", ""]
     for t in result["transfers"]:
         rows.append(f"- {md_text(names[t['from']])} → {md_text(names[t['to']])}：¥{money(t['amount_minor'])}")
@@ -110,9 +119,9 @@ def html(result, comparison=None):
     rules = []
     for pool in result["pools"]:
         amount = discount(pool["amount_minor"]) if pool["kind"] == "discount" else "+" + money(pool["amount_minor"])
-        people = escape("、".join(names[p] for p in pool["eligible"]))
+        scope = escape(pool_scope(pool, result))
         rules.append(f'''<li><span class="dot"></span>
-          <div><b>{escape(pool['name'])}</b><p>{POLICIES[pool['policy']]} · {people} · {SOURCE[pool['source']]}</p></div>
+          <div><b>{escape(pool['name'])}</b><p>{POLICIES[pool['policy']]} · {SOURCE[pool['source']]}</p><p>{scope}</p></div>
           <strong>{amount} 元</strong></li>''')
     transfers = "".join(f'<div class="transfer"><span>{escape(names[t["from"]])} '
                         f'<span class="arrow">→</span> {escape(names[t["to"]])}</span>'

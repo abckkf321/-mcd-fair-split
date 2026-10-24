@@ -12,6 +12,7 @@ from pathlib import Path
 
 from fairsplit import BillError, compare, history, require, save_version, solve, yuan, minor
 from mcp_readonly import Client, MCPError, safe_order, safe_orders
+from json_input import JSONInputError, parse_json
 import render
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,9 +20,13 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def load(path):
     try:
-        with open(path, encoding="utf-8") as stream:
-            return json.load(stream)
-    except (ValueError, UnicodeError):
+        with open(path, "rb") as stream:
+            raw = stream.read(8_000_001)
+        require(len(raw) <= 8_000_000, "输入文件超过8MB，请只保留分账所需数据")
+        return parse_json(raw.decode("utf-8"))
+    except JSONInputError as exc:
+        raise BillError(str(exc)) from None
+    except UnicodeError:
         raise BillError("输入不是有效的UTF-8 JSON") from None
 
 
@@ -65,8 +70,9 @@ def draft(snapshot, total_unit, bill_id, delivery_unit=None):
             return yuan(raw)
         require(isinstance(raw, str) and re.fullmatch(r"[0-9]+", raw) is not None, "分金额必须是整数形式字符串")
         # 先限制位数，防止超长数字触发int解析上限的未捕获ValueError。
-        require(len(raw) <= 10, "分金额位数超出支持范围")
-        return minor(int(raw))
+        digits = raw.lstrip("0") or "0"
+        require(len(digits) <= 10, "分金额位数超出支持范围")
+        return minor(int(digits))
     total = convert(order["realTotalAmount"], total_unit)
     unresolved = ["确认参与人和垫付者；占位人员不代表真实参与人",
                   "确认商品基准与优惠包含关系；当前快照没有逐商品实付",
@@ -105,7 +111,7 @@ def draft(snapshot, total_unit, bill_id, delivery_unit=None):
 
 
 def parser():
-    p = argparse.ArgumentParser(description="麦麦公平账 McFairSplit 0.1.1")
+    p = argparse.ArgumentParser(description="麦麦公平账 McFairSplit 0.1.2")
     sub = p.add_subparsers(dest="command", required=True)
     s = sub.add_parser("solve", help="校验、分账，导出分享账单")
     s.add_argument("input", nargs="?", help="账单JSON；演示时省略")

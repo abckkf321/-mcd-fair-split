@@ -4,6 +4,7 @@ import copy
 import io
 import json
 from pathlib import Path
+from http.client import IncompleteRead
 import random
 import os
 import sqlite3
@@ -13,6 +14,7 @@ from unittest.mock import patch
 
 from fairsplit import BillError, allocate, compare, history, money, save_version, solve, yuan
 from cli import main, draft, write, ROOT
+from json_input import JSONInputError, parse_json
 from mcp_readonly import Client, MCPError, read_result, safe_order, safe_orders
 import render
 
@@ -22,6 +24,13 @@ def example(which="four_people"):
 
 
 class MoneyTests(unittest.TestCase):
+    def test_leading_zero_amounts_keep_their_value(self):
+        self.assertEqual(yuan("000000000012.34"), 1234)
+        self.assertEqual(yuan("0"*5000 + ".01"), 1)
+        self.assertEqual(yuan("0"*5000), 0)
+        with self.assertRaises(BillError):
+            yuan("0"*5000 + "10000000.01")
+
     def test_decimal_conversion(self):
         self.assertEqual(yuan("0.29"), 29)
         self.assertEqual(yuan("12.3"), 1230)
@@ -76,6 +85,43 @@ class MoneyTests(unittest.TestCase):
 
 
 class BillTests(unittest.TestCase):
+    def test_invalid_field_types_are_bill_errors(self):
+        for field in ("data_mode", "payer_id"):
+            b = example()
+            b[field] = []
+            with self.subTest(field=field), self.assertRaises(BillError):
+                solve(b)
+        for obj, field, value in (("item", "source", {}), ("claim", "participant_id", []),
+                                  ("discount", "source", []), ("discount", "eligible", [{}]),
+                                  ("discount", "eligible_items", [[]]), ("discount", "policy", {})):
+            b = example()
+            target = b["items"][0] if obj == "item" else (b["items"][0]["claims"][0] if obj == "claim" else b["discounts"][0])
+            target[field] = value
+            with self.subTest(field=field), self.assertRaises(BillError):
+                solve(b)
+
+    def test_invalid_unicode_and_padded_names_rejected(self):
+        for bad in ("\ud800", "\udfff", " "*120 + "甲", " "):
+            b = example()
+            b["participants"][0]["name"] = bad
+            with self.assertRaises(BillError):
+                solve(b)
+        b = example()
+        b["participants"][0]["name"] = "甲😀"
+        render.markdown(solve(b)).encode("utf-8")
+
+    def test_exports_explain_exact_discount_product_scope(self):
+        b = example()
+        b["items"][1]["name"] = "限定餐品X"
+        b["discounts"][0]["eligible_items"] = [b["items"][1]["id"]]
+        r = solve(b)
+        coupon_line = next(line for line in render.markdown(r).splitlines() if line.startswith("- " + b["discounts"][0]["name"]))
+        self.assertIn("适用商品：限定餐品X", coupon_line)
+        self.assertNotIn(b["items"][-1]["name"], coupon_line)
+        rules = render.html(r).split('<ul class="rules">')[1].split("</ul>")[0]
+        self.assertIn("适用商品：限定餐品X", rules)
+        self.assertNotIn(b["items"][-1]["name"], rules)
+
     def test_reference_bill(self):
         r = solve(example())
         self.assertEqual([p["total_minor"] for p in r["people"]], [3174, 2391, 1000, 2235])
@@ -205,6 +251,34 @@ class BillTests(unittest.TestCase):
 
 
 class StorageTests(unittest.TestCase):
+    def test_invalid_json_never_replaces_existing_export(self):
+        bad_inputs = ('{"paid_total_minor":100,"paid_total_minor":200}',
+                      '{"items":[{"amount_minor":100,"amount_minor":200}]}',
+                      '{"rules_confirmed":true,"rules_confirmed":false}',
+                      '{"amount_minor":NaN}', '['*1100 + '0' + ']'*1100)
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = Path(tmp)/"bill.json", Path(tmp)/"bill.html"
+            for raw in bad_inputs:
+                src.write_text(raw)
+                out.write_text("previous bill")
+                error = io.StringIO()
+                with contextlib.redirect_stderr(error), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(main(["solve",str(src),"--html",str(out)]), 2)
+                self.assertNotIn("Traceback", error.getvalue())
+                self.assertEqual(out.read_text(), "previous bill")
+
+    def test_lone_surrogate_in_input_is_controlled_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = Path(tmp)/"bill.json", Path(tmp)/"bill.html"
+            b = example()
+            b["items"][0]["name"] = "\ud800"
+            src.write_text(json.dumps(b))
+            error = io.StringIO()
+            with contextlib.redirect_stderr(error), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["solve",str(src),"--html",str(out)]), 2)
+            self.assertNotIn("Traceback", error.getvalue())
+            self.assertFalse(out.exists())
+
     def test_saved_bill_excludes_unused_private_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp)/"ledger.db"
@@ -293,6 +367,49 @@ class StorageTests(unittest.TestCase):
 
 
 class AdapterTests(unittest.TestCase):
+    def test_leading_zero_fen_does_not_hit_integer_parse_limit(self):
+        s = self.snapshot()
+        s["order"]["realTotalAmount"] = "0"*5000 + "3000"
+        self.assertEqual(draft(s, "fen", "bill")["paid_total_minor"], 3000)
+        s["order"]["realTotalAmount"] = "0"*5000 + "1000000001"
+        with self.assertRaises(BillError):
+            draft(s, "fen", "bill")
+
+    def test_json_response_can_start_with_whitespace(self):
+        body = b'\n \r\n\t {"jsonrpc":"2.0","id":1,"result":{"ok":true}}'
+        self.assertEqual(read_result(io.BytesIO(body), 1), {"ok":True})
+        with patch("mcp_readonly.MAX_RESPONSE_BYTES", len(body)):
+            self.assertEqual(read_result(io.BytesIO(body), 1), {"ok":True})
+        with patch("mcp_readonly.MAX_RESPONSE_BYTES", len(body)-1):
+            with self.assertRaises(MCPError):
+                read_result(io.BytesIO(body), 1)
+
+    def test_incomplete_http_read_does_not_expose_response(self):
+        class Response:
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self,*args): return False
+            def readline(self,*args): return b'{'
+            def read(self,*args): raise IncompleteRead(b"PRIVATE_RESPONSE")
+        with patch.dict("os.environ", {"MCD_MCP_TOKEN":"fixture-only"}):
+            client = Client()
+            with patch.object(client.opener, "open", return_value=Response()):
+                with self.assertRaises(MCPError) as caught:
+                    client.rpc("initialize")
+            self.assertNotIn("PRIVATE_RESPONSE", str(caught.exception))
+
+    def test_ambiguous_mcp_json_is_rejected(self):
+        for raw in ('{"id":1,"result":{"data":{"amount":1,"amount":2}}}',
+                    '{"data":Infinity}', b'\xff', '['*1100 + '0' + ']'*1100):
+            with self.assertRaises(JSONInputError):
+                parse_json(raw)
+
+    def test_json_depth_limit_is_explicit(self):
+        parse_json('['*64 + '0' + ']'*64)
+        with self.assertRaises(JSONInputError):
+            parse_json('['*65 + '0' + ']'*65)
+        self.assertEqual(parse_json(json.dumps({"name":'[]{}"'*100}))["name"], '[]{}"'*100)
+
     def snapshot(self):
         return safe_order({"orderStatus":"6", "realTotalAmount":"30.00", "realDeliveryPrice":"0.00",
                            "realPackingFeeTotalPrice":"0.00", "tablewarePrice":"0.00",
