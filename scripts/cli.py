@@ -64,6 +64,8 @@ def draft(snapshot, total_unit, bill_id, delivery_unit=None):
         if unit == "yuan":
             return yuan(raw)
         require(isinstance(raw, str) and re.fullmatch(r"[0-9]+", raw) is not None, "分金额必须是整数形式字符串")
+        # 先限制位数，防止超长数字触发int解析上限的未捕获ValueError。
+        require(len(raw) <= 10, "分金额位数超出支持范围")
         return minor(int(raw))
     total = convert(order["realTotalAmount"], total_unit)
     unresolved = ["确认参与人和垫付者；占位人员不代表真实参与人",

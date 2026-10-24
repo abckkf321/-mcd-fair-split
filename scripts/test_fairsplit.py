@@ -30,6 +30,20 @@ class MoneyTests(unittest.TestCase):
             with self.assertRaises(BillError):
                 yuan(bad)
 
+    def test_yuan_is_exact_under_narrow_decimal_context(self):
+        import decimal
+        self.assertEqual(yuan("10.00"), 1000)
+        with decimal.localcontext() as context:
+            context.prec = 2
+            self.assertEqual(yuan("12.34"), 1234)
+            self.assertEqual(yuan("0.99"), 99)
+
+    def test_overlong_yuan_digits_raise_bill_error(self):
+        for bad in ("9"*5000, "9"*11 + ".5", "99999999.99"):
+            with self.assertRaises(BillError):
+                yuan(bad)
+        self.assertEqual(yuan("9999999.99"), 999999999)
+
     def test_small_remainder_and_order_independence(self):
         a = allocate(1, {"A": 1, "B": 1, "C": 1}, "stable")
         b = allocate(1, {"C": 1, "A": 1, "B": 1}, "stable")
@@ -324,6 +338,17 @@ class AdapterTests(unittest.TestCase):
         s["order"]["realTotalAmount"] = "²"
         with self.assertRaises(BillError):
             draft(s, "fen", "bill")
+
+    def test_overlong_fen_digits_raise_bill_error_not_value_error(self):
+        s = self.snapshot()
+        s["order"]["realTotalAmount"] = "5"*5000
+        with self.assertRaises(BillError):
+            draft(s, "fen", "bill")
+        s["order"]["realTotalAmount"] = "10000000000"
+        with self.assertRaises(BillError):
+            draft(s, "fen", "bill")
+        s["order"]["realTotalAmount"] = "1000000000"
+        self.assertEqual(draft(s, "fen", "bill")["paid_total_minor"], 1_000_000_000)
 
     def test_snapshot_rejects_nested_data_in_scalar_fields(self):
         for field in ("realTotalAmount", "storeName"):

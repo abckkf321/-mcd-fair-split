@@ -90,4 +90,6 @@ python3 scripts/test_fairsplit.py
 
 仓库已包含源码、`SKILL.md`、MCP 配置示例和官方原文 `CONTEST_DECLARATION.md`。官方声明保留原有条款，不扩展第三方素材授权。
 
-本仓库已公开；[活动报名 Issue](https://github.com/M-China/mcd-developer-innovation-challenge) 尚未提交。申请 WorkBuddy 专项奖励还需要实际使用 WorkBuddy，并按活动要求导出记录。
+已提交[参赛申请 #1268](https://github.com/M-China/mcd-developer-innovation-challenge/issues/1268)。2026-10-24 使用 WorkBuddy 在线版复现并修复超长金额输入及 Decimal 精度影响，增加3项回归测试；合入后在本地复核，44项测试通过。真实会话节选见 [workbuddy.md](workbuddy.md)，其中保留了网络失败、中断及测试断言修正的原文说明。
+
+该记录用于申请 WorkBuddy 专项奖励，不代表已通过审核或获得奖励；仍须满足官方排名等条件。

@@ -8,7 +8,6 @@ import json
 import os
 import re
 import sqlite3
-from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
 
@@ -31,7 +30,10 @@ def minor(value, label="金额"):
 def yuan(value):
     require(isinstance(value, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]{1,2})?", value) is not None,
             "元金额必须是最多两位小数的非负十进制字符串")
-    return minor(int(Decimal(value) * 100))
+    whole, _, frac = value.partition(".")
+    # 手工按位换算成整数分，不经过Decimal运算，避免受全局decimal上下文精度影响。
+    require(len(whole) <= 11, "元金额位数超出支持范围")
+    return minor(int(whole + frac.ljust(2, "0")))
 
 
 def money(value):
